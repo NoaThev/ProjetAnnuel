@@ -1,11 +1,15 @@
 from flask import Flask, request, jsonify
 import pandas as pd
 import os
+import pandas as pd
+import joblib
+from sklearn.preprocessing import StandardScaler
 
 app = Flask(__name__)
 
-# Chemin vers le fichier Excel
-FILE_PATH = 'C:\\Users\\noath\\Documents\\myapi\\data.xlsx'
+rf_model = joblib.load('random_forest_model.pkl')
+scaler = joblib.load('scaler.pkl')
+top_feature_names = joblib.load('top_feature_names.pkl')
 
 @app.route('/')
 def home():
@@ -14,92 +18,39 @@ def home():
 @app.route('/health', methods=['GET'])
 def health_check():
     try:
-        # Vérifier si le fichier Excel est accessible
-        if os.path.exists(FILE_PATH):
-            pd.read_excel(FILE_PATH)
-        return 'OK', 200
+        return 'System OK', 200
     except Exception as e:
         return 'Error: ' + str(e), 500
-
-@app.route('/data', methods=['GET'])
-def get_data():
-    try:
-        # Vérifier si le fichier Excel existe
-        if not os.path.exists(FILE_PATH):
-            return jsonify({"message": "Le fichier de données n'existe pas."}), 404
-
-        # Lire le fichier Excel
-        df = pd.read_excel(FILE_PATH)
-
-        # Convertir les données en dictionnaire
-        data = df.to_dict(orient='records')
-
-        response = {
-            "message": "Voici quelques données",
-            "data": data
-        }
-        return jsonify(response)
-    except PermissionError:
-        return jsonify({"message": "Permission denied. Cannot read the file."}), 403
-    except Exception as e:
-        return jsonify({"message": str(e)}), 500
-
-@app.route('/data', methods=['POST'])
-def post_data():
-    try:
-        # Récupérer les données envoyées dans la requête POST
-        new_data = request.json
-
-        # Convertir les nouvelles données en DataFrame
-        new_df = pd.DataFrame([new_data])
-
-        # Vérifier si le fichier Excel existe déjà
-        if os.path.exists(FILE_PATH):
-            # Lire le fichier Excel existant
-            df = pd.read_excel(FILE_PATH)
-            # Ajouter les nouvelles données
-            df = pd.concat([df, new_df], ignore_index=True)
-        else:
-            # Si le fichier n'existe pas, utiliser simplement les nouvelles données
-            df = new_df
-
-        # Sauvegarder les données dans le fichier Excel
-        df.to_excel(FILE_PATH, index=False)
-
-        response = {
-            "message": "Données ajoutées avec succès",
-            "data_received": new_data
-        }
-        return jsonify(response)
-    except PermissionError:
-        return jsonify({"message": "Permission denied. Cannot write to the file."}), 403
-    except Exception as e:
-        return jsonify({"message": str(e)}), 500
 
 @app.route('/predict/patient', methods=['POST'])
 def predict_patient():
     try:
-        # Récupérer les données envoyées dans la requête POST
+        # Obtenir les données de la requête POSTx
         patient_data = request.json
 
-        # Définir les colonnes attendues
-        expected_columns = ['ID', 'PRG', 'PL', 'PR', 'SK', 'TS', 'M11', 'BD2', 'Age', 'Insurance']
+        # Vérifier que toutes les colonnes nécessaires sont présentes
+        missing_columns = [col for col in top_feature_names if col not in patient_data]
+        if missing_columns:
+            return jsonify({"message": f"Missing data for columns: {', '.join(missing_columns)}"}), 422
 
-        # Vérifier que toutes les colonnes sont présentes
-        for col in expected_columns:
-            if col not in patient_data:
-                return jsonify({"message": f"Missing data for {col}"}), 422
+        # Convertir les données en DataFrame
+        patient_df = pd.DataFrame([patient_data])
 
-        # Exemple de logique simple pour prédire le statut du patient
-        # Remplacer cette logique par un modèle de machine learning selon les besoins
-        if patient_data['PRG'] > 5 or patient_data['PL'] > 150:
-            status = 'Positive'
-        else:
-            status = 'Negative'
+        # Sélectionner les caractéristiques nécessaires
+        x_new = patient_df[top_feature_names]
+
+        # Appliquer la normalisation/scaling
+        x_new_scaled = scaler.transform(x_new)
+
+        # Faire les prédictions
+        predictions = rf_model.predict(x_new_scaled)
+
+        # Convertir les prédictions en une liste pour la réponse JSON
+        predictions = predictions.tolist()
 
         response = {
             "message": "Prediction successful",
-            "status": status
+            "predictions": predictions
         }
         return jsonify(response)
     except Exception as e:
